@@ -46,7 +46,7 @@
   }
   if(path==='/app/busy')return json({state:processing?'busy':'idle',label:processing?'正在回复':''});
   if(path==='/app/status')return json({online:true});
-  if(path==='/app/connection')return realFetch('/api/provider',{credentials:'same-origin',cache:'no-store'}).then(async function(r){if(!r.ok)return r;var s=await r.json();return new Response(JSON.stringify({model:s.model||'尚未选择模型',model_configured:s.key_set,memory_configured:false,memory_online:false,memory_write_enabled:false,last_memory:{retrieved:false}}),{headers:{'Content-Type':'application/json'}});});
+  if(path==='/app/connection')return realFetch('/api/provider',{credentials:'same-origin',cache:'no-store'}).then(async function(r){if(!r.ok)return r;var s=await r.json();return new Response(JSON.stringify({model:s.model||'尚未选择模型',model_configured:s.key_set,memory_configured:!!window.NyxMemory?.hasAuth(),memory_online:!!window.NyxMemory?.status().ready,memory_write_enabled:!!window.NyxMemory?.status().ready,memory_error:window.NyxMemory?.status().error||'',last_memory:{retrieved:!!window.NyxMemory?.status().lastRead}}),{headers:{'Content-Type':'application/json'}});});
   return json({detail:'当前版本未启用这个功能'},404);
  };
 })();

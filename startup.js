@@ -58,11 +58,12 @@
       var r=await fetch(window.NYX.relay+'/app/connection',{headers:{Authorization:'Bearer '+key},cache:'no-store'});
       if(!r.ok)throw 0;
       var s=await r.json();
-      if(window.NYX_HOSTED){note.textContent=s.model_configured?s.model+' · 旧记忆未连接':'先点 API 设置，连接模型';note.title='聊天记录保存在当前浏览器，尚未连接旧记忆库。';return;}
+      if(window.NYX_HOSTED){note.textContent=s.model_configured?s.model+' · '+(s.memory_error?'记忆调用失败':(s.memory_online?(s.last_memory.retrieved?'已检索旧记忆':'记忆已连接'):'旧记忆未连接')):'先点 API 设置，连接模型';note.title='聊天记录保存在当前浏览器；记忆读写以实际连接和工具结果为准。';return;}
       note.textContent=(s.model_configured?s.model:'模型密钥未配置')+' · '+(s.memory_online?(s.last_memory.retrieved?'本轮已检索旧记忆':'记忆已连接，等待检索'):(s.memory_configured?'记忆暂不可用':'旧记忆未连接'))+(window.NYX_HOSTED?' · 聊天记录保存在此浏览器':(s.memory_write_enabled?'':' · 未启用长期保存'));
     }catch(e){note.textContent='后端暂不可达 · 记忆状态未确认';}
   }
   window.addEventListener('nyx-provider-saved',status);
+  window.addEventListener('nyx-memory-status',status);
   setInterval(status,4500);setTimeout(status,1200);
   if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(function(){});
 })();
