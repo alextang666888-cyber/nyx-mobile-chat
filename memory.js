@@ -4,9 +4,9 @@
  if(!window.NYX_BROWSER_ONLY)return;
  const ORIGIN='https://ombre-brain-nzh4.onrender.com',RESOURCE=ORIGIN+'/mcp';
  const AUTH='nyx_ob_auth_v1',PENDING='nyx_ob_pending_v1';
- const network=window.fetch.bind(window),CORE=new Set(['pulse','breath','breath_search','breath_advanced','hold','grow','trace']);
+ const network=window.fetch.bind(window),CORE=new Set(['pulse','breath','breath_search','breath_advanced','hold','grow','trace','letter_read']);
  let auth=read(AUTH,localStorage),session='',version='2025-03-26',tools=[],opening=null,refreshing=null,nextId=1,coreCache=null;
- let state={connected:!!auth,ready:false,busy:false,lastAction:'',lastRead:false,lastWrite:false,error:'',tools:[],events:[]};
+ let state={connected:!!auth,ready:false,busy:false,lastAction:'',lastRead:false,lastWrite:false,error:'',retrieveMs:0,contextChars:0,contextLimited:false,tools:[],events:[]};
  function read(key,store){try{return JSON.parse(store.getItem(key)||'null');}catch(e){return null;}}
  function emit(change){Object.assign(state,change);window.dispatchEvent(new CustomEvent('nyx-memory-status',{detail:publicState()}));}
  function publicState(){return {...state,tools:state.tools.slice(),events:state.events.slice()};}
@@ -89,26 +89,40 @@
  async function call(name,args={},options={}){
   await open();if(!CORE.has(name)||!tools.some(t=>t.name===name))throw error('当前记忆库不提供这个操作。');
   if(name==='trace'&&([args.delete,args.hard_delete].some(v=>v===true||v===1||v==='true'||v==='1')||['approve','approved'].includes(args.deletion_decision))&&!/(删除|删掉|移除.*记忆)/.test(options.userText||''))throw error('删除记忆需要用户明确提出；当前只允许查询和更新。');
-  const write=['hold','grow','trace'].includes(name);event(name,'running',write?'正在保存或更新记忆…':'正在读取记忆…');
-  try{const result=await rpc('tools/call',{name,arguments:args});const text=resultText(result);if(write)coreCache=null;emit({error:'',...(write?{lastWrite:true}:{lastRead:true})});event(name,'success',write?'记忆保存/更新调用已完成':'记忆读取已完成');return text;}
+  const started=Date.now(),write=['hold','grow','trace'].includes(name);event(name,'running',write?'正在保存或更新记忆…':'正在读取记忆…');
+  try{const result=await rpc('tools/call',{name,arguments:args});const text=resultText(result);if(write)coreCache=null;emit({error:'',...(write?{lastWrite:true}:{lastRead:true})});event(name,'success',(write?'记忆保存/更新调用已完成':(name==='letter_read'?'信件读取已完成':'记忆读取已完成'))+'（'+((Date.now()-started)/1000).toFixed(1)+' 秒）');return text;}
   catch(e){const message=scrub(e.message||'记忆操作失败。');emit({error:message,...(write?{lastWrite:false}:{lastRead:false})});event(name,'error',message);throw e;}
  }
  async function prepare(query){
   if(!auth)return {context:'',tools:[],available:false};
-  emit({lastRead:false,lastWrite:false});
+  const started=Date.now();emit({lastRead:false,lastWrite:false,contextLimited:false});
   try{
-   await open();let parts=[];
-   if(tools.some(t=>t.name==='breath_search')){
-    if(!coreCache&&tools.some(t=>t.name==='breath'))coreCache=await call('breath',{});if(coreCache)parts.push(coreCache.slice(0,6000));
-    const schema=tools.find(t=>t.name==='breath_search').inputSchema?.properties||{};const args={query:String(query||'').slice(0,600)};if(schema.max_results)args.max_results=6;if(schema.max_tokens)args.max_tokens=1800;parts.push(await call('breath_search',args));
-   }else if(tools.some(t=>t.name==='breath')){const schema=tools.find(t=>t.name==='breath').inputSchema?.properties||{};parts.push(await call('breath',schema.query?{query:String(query||'').slice(0,600)}:{}));}
+   await open();
+   const find=name=>tools.find(t=>t.name===name),advanced=find('breath_advanced'),advancedProps=advanced?.inputSchema?.properties||{};
+   const budgeted=!!advancedProps.max_tokens;let loadCore,loadRelated;
+   if(!coreCache||Date.now()-coreCache.created>300000){
+    loadCore=budgeted?call('breath_advanced',{max_tokens:1600,max_results:3}):(find('breath')?call('breath',{}):Promise.resolve(''));
+    loadCore=loadCore.then(text=>{coreCache={text,created:Date.now()};return text;});
+   }else loadCore=Promise.resolve(coreCache.text);
+   if(budgeted)loadRelated=call('breath_advanced',{query:String(query||'').slice(0,600),max_tokens:1800,max_results:3});
+   else if(find('breath_search')){const props=find('breath_search').inputSchema?.properties||{};const args={query:String(query||'').slice(0,600)};if(props.max_results)args.max_results=3;loadRelated=call('breath_search',args);}
+   else if(find('breath')){const props=find('breath').inputSchema?.properties||{};loadRelated=props.query?call('breath',{query:String(query||'').slice(0,600)}):Promise.resolve('');}
    else throw error('当前记忆库没有提供检索工具。');
-   return {context:parts.join('\n\n').slice(0,14000),tools:tools.slice(),available:true};
-  }catch(e){emit({lastRead:false,error:scrub(e.message)});return {context:'',tools:[],available:false,failed:true};}
+   const [core,related]=await Promise.all([loadCore,loadRelated]);
+   let parts=[],size=0,limited=false;for(const [label,text] of [['相关记忆',related],['核心与浮现记忆',core]]){
+    if(!text||parts.some(p=>p.endsWith(text)))continue;
+    if(text.length>12000||size+text.length>16000){limited=true;parts.push('【'+label+'】这份结果超过自动载入预算，整份暂未加入，未截断正文。这不表示没有相关记忆；需要时请用检索工具缩小范围、按 ID 读取或提高服务器端 max_tokens。');}
+    else{parts.push('【'+label+'】\n'+text);size+=text.length;}
+   }
+   parts.push('信件目录与信件正文是不同入口：普通 breath 检索不包含 Letter 正文，需要读信时使用 letter_read；目录里的标题、日期和重要度不能当作信件原文。');
+   const context=parts.join('\n\n');emit({retrieveMs:Date.now()-started,contextChars:context.length,contextLimited:limited});
+   return {context,tools:tools.slice(),available:true,limited};
+  }catch(e){emit({lastRead:false,retrieveMs:Date.now()-started,error:scrub(e.message)});return {context:'',tools:[],available:false,failed:true};}
  }
+ async function letters(query=''){await open();if(!tools.some(t=>t.name==='letter_read'))throw error('原 OB 当前没有提供 letter_read，请在原服务确认信件读取接口。');return call('letter_read',{query,limit:1});}
  async function search(query){await open();if(tools.some(t=>t.name==='breath_search'))return call('breath_search',{query});const t=tools.find(t=>t.name==='breath');if(!t)throw error('没有可用的检索工具。');return call('breath',t.inputSchema?.properties?.query?{query}:{});}
- function disconnect(){auth=null;session='';tools=[];coreCache=null;localStorage.removeItem(AUTH);sessionStorage.removeItem(PENDING);emit({connected:false,ready:false,lastRead:false,lastWrite:false,error:'',tools:[],lastAction:'此设备已断开记忆库连接'});}
- window.NyxMemory={hasAuth:()=>!!auth,status:publicState,connect:authorize,disconnect,open,call,search,prepare};
+ function disconnect(){auth=null;session='';tools=[];coreCache=null;localStorage.removeItem(AUTH);sessionStorage.removeItem(PENDING);emit({connected:false,ready:false,lastRead:false,lastWrite:false,error:'',retrieveMs:0,contextChars:0,contextLimited:false,tools:[],lastAction:'此设备已断开记忆库连接'});}
+ window.NyxMemory={hasAuth:()=>!!auth,status:publicState,connect:authorize,disconnect,open,call,search,letters,prepare};
  const callback=receiveCallback();window.NyxMemory.callback=callback;
  callback.then(handled=>{if(!handled&&auth)open().catch(()=>{});});
 })();

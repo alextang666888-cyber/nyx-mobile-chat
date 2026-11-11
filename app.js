@@ -309,7 +309,7 @@
       if (!String(m.text || "").trim() && atts.length === 1 && /^sticker-/.test(atts[0].name || "")) el.classList.add("only-stk", "stk-att");   // your own sticker went up as a picture; show it like a sticker
       STK.lastIndex = 0;
     }
-    el.innerHTML = '<div class="body">' + inner + '<span class="t">' + hm(m.ts) + (me ? (m.id !== "" && m.id != null ? MARK_SENT : MARK_WAIT) : "") + "</span></div>";
+    el.innerHTML = '<div class="body">' + inner + '<span class="t">' + (m.meta && m.meta.interaction_mode === "scene" ? '<span class="interaction-label">线下</span>' : "") + hm(m.ts) + (me ? (m.id !== "" && m.id != null ? MARK_SENT : MARK_WAIT) : "") + "</span></div>";
     wireAtts(el, (m.meta && m.meta.attachments) || []);
     el.querySelectorAll("img.stk").forEach(stkFallback);
     if (m.id !== "" && m.id != null) {
@@ -534,7 +534,7 @@
   // goes out once they're up. If an image never makes it, nothing is sent and a tap retries just the missing ones.
   function send() {
     var t = text.value.trim(); if ((!t && !tray.length) || !key) return;
-    var items = tray.slice(), q = quote;
+    var items = tray.slice(), q = quote, interactionMode = window.NyxInteraction ? window.NyxInteraction.get() : "chat";
     tray = []; trayEl.innerHTML = ""; trayEl.hidden = true;
     text.value = ""; grow(); setQuote(null);
     var local = items.map(function (x) { return x.local ? { kind: "image", name: x.name } : { kind: "file", name: x.name }; });
@@ -554,7 +554,7 @@
     function go() {
       var atts = items.filter(function (x) { return x.done; }).map(function (x) { return x.done; });
       if (!t && !atts.length) { fail(); return; }
-      var body = { text: t, side: root.dataset.side }; if (q) body.quote = q; if (atts.length) body.attachments = atts;
+      var body = { text: t, side: root.dataset.side, interaction_mode: interactionMode }; if (q) body.quote = q; if (atts.length) body.attachments = atts;
       return api("/app/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
         .then(function () { setTimeout(catchUp, 1500); }).catch(fail);   // the stream normally echoes it; this is the safety net
     }

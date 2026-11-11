@@ -7,20 +7,20 @@
  function persist(){try{localStorage.setItem(storage,JSON.stringify(messages.slice(-500)));}catch(e){}}
  function add(from,text,meta){var row={id:messages.length?messages[messages.length-1].id+1:1,ts:new Date().toISOString(),from:from,kind:from==='human'?'user':'reply',text:text,meta:meta||{}};messages.push(row);persist();push(row);return row;}
  function json(data,status){return Promise.resolve(new Response(JSON.stringify(data),{status:status||200,headers:{'Content-Type':'application/json'}}));}
- async function answer(context){
-  var text='',stream='cloud-'+Date.now(),success=false;
+ async function answer(context,mode){
+  var text='',stream='cloud-'+Date.now(),success=false,started=Date.now(),firstText=0,modelRounds=0;
   try{
-   var r=await realFetch('/api/chat',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:context})});
+   var r=await realFetch('/api/chat',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:context,interaction_mode:mode})});
    if(!r.ok){var error=await r.json();throw Error(error.detail||'模型连接失败');}
    var reader=r.body.getReader(),dec=new TextDecoder(),buf='';
    while(true){var result=await reader.read();if(result.done)break;buf+=dec.decode(result.value,{stream:true});var cut;
-    while((cut=buf.indexOf('\n\n'))>=0){var frame=buf.slice(0,cut);buf=buf.slice(cut+2);var line=frame.split('\n').find(function(x){return x.startsWith('data:');});if(!line)continue;var ev=JSON.parse(line.slice(5));if(ev.type==='error')throw Error(ev.message);if(ev.type==='done')success=true;if(ev.type==='text'){text+=ev.text;push({type:'reply_delta',stream_id:stream,text:ev.text,done:false});}}
+    while((cut=buf.indexOf('\n\n'))>=0){var frame=buf.slice(0,cut);buf=buf.slice(cut+2);var line=frame.split('\n').find(function(x){return x.startsWith('data:');});if(!line)continue;var ev=JSON.parse(line.slice(5));if(ev.type==='error')throw Error(ev.message);if(ev.type==='done'){success=true;modelRounds=ev.model_rounds||1;}if(ev.type==='text'){if(!firstText)firstText=Date.now()-started;text+=ev.text;push({type:'reply_delta',stream_id:stream,text:ev.text,done:false});}}
    }
    if(!success)throw Error('回复中断，未自动重试。');
   }catch(e){text+=(text?'\n\n':'')+'⚠ '+e.message;}
   finally{
    push({type:'reply_delta',stream_id:stream,done:true,final_text:text});
-   add('ai',text,{api_error:!success,stream_id:stream});processing=false;push({type:'typing',active:false});
+   add('ai',text,{api_error:!success,stream_id:stream,interaction_mode:mode});if(window.dispatchEvent)window.dispatchEvent(new CustomEvent('nyx-chat-timing',{detail:{totalMs:Date.now()-started,firstTextMs:firstText,modelRounds}}));processing=false;push({type:'typing',active:false});
   }
  }
  window.fetch=function(input,opt){
@@ -37,11 +37,12 @@
    if(processing)return json({detail:'上一条消息仍在回复，请稍后发送。'},409);
    var body;try{body=JSON.parse(opt.body||'{}');}catch(e){return json({detail:'消息格式不正确'},400);}
    if(!body.text||body.text.length>20000)return json({detail:'消息为空或太长'},400);
+   var mode=body.interaction_mode==='scene'?'scene':'chat';
    processing=true;
    return realFetch('/api/provider',{credentials:'same-origin',cache:'no-store'}).then(async function(r){
     var cfg=await r.json();if(!r.ok||!cfg.key_set){processing=false;return json({detail:cfg.detail||'请先打开 API 设置，保存服务商和模型。'},400);}
-    var context=messages.filter(function(m){return !m.meta.api_error;}).slice(-16).map(function(m){return {role:m.from==='human'?'user':'assistant',content:m.text};});
-    context.push({role:'user',content:body.text});var row=add('human',body.text,{quote:body.quote});push({type:'typing',active:true});answer(context);return json({id:row.id});
+    var context=messages.filter(function(m){return !m.meta?.api_error;}).slice(-16).map(function(m){return {role:m.from==='human'?'user':'assistant',content:m.text};});
+    context.push({role:'user',content:body.text});var row=add('human',body.text,{quote:body.quote,interaction_mode:mode});push({type:'typing',active:true});answer(context,mode);return json({id:row.id});
    }).catch(function(){processing=false;return json({detail:'暂时连接不到云端后端。'},502);});
   }
   if(path==='/app/busy')return json({state:processing?'busy':'idle',label:processing?'正在回复':''});
