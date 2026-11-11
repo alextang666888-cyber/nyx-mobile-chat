@@ -20,7 +20,7 @@
   }catch(e){text+=(text?'\n\n':'')+'⚠ '+e.message;}
   finally{
    push({type:'reply_delta',stream_id:stream,done:true,final_text:text});
-   add('ai',text,{api_error:!success});processing=false;push({type:'typing',active:false});
+   add('ai',text,{api_error:!success,stream_id:stream});processing=false;push({type:'typing',active:false});
   }
  }
  window.fetch=function(input,opt){

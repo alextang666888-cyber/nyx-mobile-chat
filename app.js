@@ -326,16 +326,16 @@
   // put one message in its place by id (history and stream can both deliver it; the second copy just replaces)
   function put(m) {
     if (!m || m.id == null) return;
-    var id = +m.id; if (id > lastId) lastId = id;
+    var stick = nearBottom(160), id = +m.id; if (id > lastId) lastId = id;
     if (m.meta && m.meta.stream_id) dropDraft(m.meta.stream_id + ":" + (m.kind === "thinking" ? "thinking" : "reply"));
     var p = null;
     if (m.from === "human") { p = log.querySelector('.msg.pending[data-text="' + CSS.escape(m.text || "") + '"]'); if (p) p.remove(); }
     if (deleted.has(String(m.id))) return;
     msgs.set(id, m);
-    var el = build(m), old = byId.get(id), stick = nearBottom();
+    var el = build(m), old = byId.get(id);
     // the real copy of a just-sent image fetches it back from the relay; borrow the local preview so the bubble isn't blank meanwhile
     if (p) { var lp = p.querySelectorAll(".att img"), np = el.querySelectorAll(".att img"); for (var j = 0; j < np.length && j < lp.length; j++) if (lp[j].src && !np[j].getAttribute("src")) np[j].src = lp[j].src; }
-    if (old) { old.replaceWith(el); byId.set(id, el); return; }
+    if (old) { old.replaceWith(el); byId.set(id, el); if (stick) toBottom(); return; }
     byId.set(id, el);
     var after = null; // walk back to the last message older than this one
     for (var n = log.lastElementChild; n; n = n.previousElementSibling) if (n.dataset && n.dataset.id && +n.dataset.id < id) { after = n; break; }
@@ -347,16 +347,19 @@
     keepTyping(); if (stick) toBottom();
   }
   function draft(ev) {
+    var stick = nearBottom(160);
     var k = ev.stream_id + ":" + (ev.type === "thinking_delta" ? "thinking" : "reply"), d = drafts.get(k);
+    if (!d && ev.done && !ev.final_text) return;
     if (!d) {
       d = { text: "", el: build({ id: "", from: "ai", kind: ev.type === "thinking_delta" ? "thinking" : "reply", text: "", ts: new Date().toISOString(), meta: {} }) };
       d.el.classList.add("draft"); drafts.set(k, d); log.appendChild(d.el); keepTyping();
     }
-    d.text += ev.text || "";
+    if (ev.done && typeof ev.final_text === "string") d.text = ev.final_text;
+    else d.text += ev.text || "";
     var b = d.el.querySelector(".body");
     if (ev.type === "thinking_delta") b.querySelector("details").innerHTML = "<summary>thinking…</summary>" + rich(d.text);
     else b.innerHTML = rich(d.text);
-    if (nearBottom(160)) toBottom();
+    if (stick) toBottom();
   }
   function dropDraft(k) { var d = drafts.get(k); if (d) { d.el.remove(); drafts.delete(k); } }
 
