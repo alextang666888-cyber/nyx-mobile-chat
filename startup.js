@@ -23,7 +23,7 @@
   var bar=document.createElement('div'); bar.className='connection-bar';
   var note=document.createElement('span'); note.id='connectionNote';
   note.textContent=preview?'界面预览 · 模型未连接 · 旧记忆未连接':'等待连接 · 旧记忆尚未接回';
-  var reset=document.createElement('button');reset.type='button';reset.textContent=window.NYX_BROWSER_ONLY?'刷新':'返回入口';
+  var reset=document.createElement('button');reset.id='connectionReset';reset.type='button';reset.textContent=window.NYX_BROWSER_ONLY?'刷新':'返回入口';
   reset.onclick=function(){
     ['nyx_key','nyx_relay','nyx_chat_key','nyx_ai'].forEach(function(k){try{localStorage.removeItem(k);}catch(e){}});
     if(!window.NYX_PREVIEW_ONLY){location.href=location.pathname;}else{location.reload();}

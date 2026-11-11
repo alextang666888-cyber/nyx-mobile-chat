@@ -41,8 +41,9 @@
     else if (a.href) location.href = a.href;
     else if (a.id === "memory" && hold) hold.memory();
   }
-  $("back").onclick = function () { show("home"); };
-  function openDrawer() { $("drawer").classList.add("open"); $("drawer").setAttribute("aria-hidden", "false"); }
+  $("back").onclick = function () { openDrawer(); };
+  window.NyxNavigation = { home: function () { closeDrawer(); show("home"); } };
+  function openDrawer() { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); $("drawer").classList.add("open"); $("drawer").setAttribute("aria-hidden", "false"); }
   function closeDrawer() { $("drawer").classList.remove("open"); $("drawer").setAttribute("aria-hidden", "true"); }
   $("menu").onclick = openDrawer; $("drawer").querySelector(".sh").onclick = closeDrawer;
   $("drawerTitle").textContent = C.title || "Nyx"; $("homeTitle").textContent = (C.title || "Nyx").toUpperCase();
@@ -377,7 +378,7 @@
     box.querySelector("span").textContent = q.who + ": " + q.text; box.hidden = false; text.focus();
   }
   $("quote").querySelector("button").onclick = function () { setQuote(null); };
-  function grow() { text.style.height = "auto"; text.style.height = Math.min(text.scrollHeight, innerHeight * .4) + "px"; }
+  function grow() { if (window.NyxViewport) { window.NyxViewport.fitTextarea(); return; } text.style.height = "auto"; text.style.height = Math.min(text.scrollHeight, innerHeight * .4) + "px"; }
   text.addEventListener("input", grow);
   // on a phone Enter is a new line and the send button sends; with a keyboard Enter sends and Shift+Enter breaks the line
   var touchInput = window.matchMedia && matchMedia("(pointer: coarse)").matches;
@@ -814,23 +815,7 @@
   };
   document.addEventListener("visibilitychange", function () { if (!document.hidden && key) { catchUp(); if (!streamCtl) openStream(); } });
 
-  /* iOS pushes the whole page up when the keyboard opens: the header slides off and a gap opens under the box.
-     Size the chat to the visible viewport instead while the keyboard is up. */
-  (function () {
-    var vv = window.visualViewport, room = $("room"); if (!vv || !room) return;
-    function apply() {
-      var kb = (window.innerHeight || 0) - vv.height > 80;
-      root.classList.toggle("kb", kb);
-      if (kb) { room.style.height = vv.height + "px"; room.style.top = vv.offsetTop + "px"; room.style.bottom = "auto"; }
-      else { room.style.height = room.style.top = room.style.bottom = ""; }
-      if (kb && document.activeElement === text) toBottom();
-    }
-    var t = 0;
-    vv.addEventListener("resize", function () { apply(); clearTimeout(t); t = setTimeout(apply, 120); });
-    vv.addEventListener("scroll", apply);
-    text.addEventListener("focus", function () { [0, 80, 350, 700].forEach(function (d) { setTimeout(apply, d); }); });
-    text.addEventListener("blur", function () { [80, 350].forEach(function (d) { setTimeout(apply, d); }); });
-  })();
+  /* Keyboard and viewport geometry are managed by mobile.js. */
 
   if (window.NyxSplash) NyxSplash(root.dataset.side, root.dataset.side, C.splash);
   var saved = null; try { saved = localStorage.getItem("nyx_key"); } catch (e) {}
