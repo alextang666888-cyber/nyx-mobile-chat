@@ -23,5 +23,5 @@
     "fullscreen",
     "standalone"
   ],
-  "orientation": "any"
+  "orientation": "portrait-primary"
 }

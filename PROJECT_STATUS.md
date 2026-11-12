@@ -2,7 +2,7 @@
 
 更新日期：2026-11-12（Asia/Shanghai）
 
-当前版本标识：20261112-chat1
+当前版本标识：20261112-history1
 
 用途：项目说明、功能清单、代码地图与后续路线，供继续开发时交接和查阅。
 
@@ -39,6 +39,9 @@
 | 读取与回复耗时显示 | 已实现 | 检索耗时、载入字符数、首字等待、回复总耗时、模型请求次数 |
 | 安卓 Edge 输入与侧栏适配 | 已实现 | 可见视口、软键盘、多行输入、抽屉、设置弹窗 |
 | 全屏与桌面安装 | 已实现 | 支持浏览器点击全屏；PWA 从桌面打开优先全屏 |
+| 竖屏方向锁定 | 本版补齐 | 安装配置 portrait-primary；全屏/安装版请求方向锁定，拒绝时显示实际限制 |
+| 消息滑动条 | 本版新增 | 右侧拖动、所在日期提示与键盘定位 |
+| 按日期查找消息 | 本版新增 | 侧栏日期查询、本地消息列表、跳转高亮，排除隐藏记录 |
 | 日夜主题、消息复制/引用/本地隐藏 | 保留并可用 | 本地隐藏不删除 OB 记忆；界面能力沿用 Nyx |
 | 跨手机同步聊天记录 | 未实现 | 目前各设备本地记录独立 |
 | 自动摘要、压缩和多聊天窗口 | 未接入 | 原 Nyx 有相关机制，本纯前端版没有接入该后端 |
@@ -101,6 +104,7 @@ API key 只交给所选模型服务商。OB 访问令牌只交给原 OB。检索
 | prompts/scene.md | 线下模式表达要求 | 对白、动作、环境、节奏和细致互动 |
 | cloud/prompts.mjs | 预设生成文件 | 由 Markdown 原文编译；修改原文后重新生成 |
 | browser-provider.js | 浏览器直接运行的生成文件 | 由预设、provider 和 browser-bootstrap 生成，不手工编辑 |
+| history.js / history.css | 本地历史导航 | 消息拖动滑条、日期筛选、结果跳转高亮；不调用模型或记忆库 |
 | interaction.js / interaction.css | 加号菜单与精简聊天布局 | 图片与模式两个平级入口；当前模式显示在联系人名称下方 |
 | memory.js | 私人 OB 授权与 MCP 客户端 | PKCE、续期、会话、读取预算、缓存、读信、工具白名单 |
 | memory-ui.js / memory.css | 记忆操作面板 | 连接、查询、读信、概览、保存、最近操作与耗时 |
@@ -237,6 +241,7 @@ pulse、breath、breath_search、breath_advanced、hold、grow、trace、letter_
 - Claude/OpenAI 图片块、图片只存设备内、请求时编码、刷新后历史图片重载；图片入口与侧栏设置的手机操作。
 - 重复消息、相同内容的不同轮次、历史重载、长回复滚动、向上阅读位置。
 - 安卓 Edge 多宽度/横屏/软键盘、输入区、侧栏、设置与记忆弹窗。
+- 竖屏 manifest、方向锁 API 成功/拒绝分支（浏览器模拟，非真机硬件验证）；滑条拖动与键盘定位、日期跳转、跨 UTC 日期的本地时间边界、隐藏消息排除与空日期。
 
 线上公开页面、资源与跳转到原 OB 的授权入口已经验证。用户反馈普通记忆已能使用；当前会话未取得用户浏览器的私人授权，Letter 私人正文与真实服务商语言表现仍需用户在自己设备上验证。不会把模拟信件或模拟写入说成读取了真实私人数据。
 
@@ -261,13 +266,13 @@ node tests/test_interaction.mjs
 node tests/test_composer_provider.mjs
 node tests/test_memory_client.cjs
 node tests/test_memory_chat.mjs
-python tools/package_starter.py nyx-linkapi-chat-shell-source.zip
+python tools/package_starter.py nyx-linkapi-history-source.zip
 python tools/export_browser.py
 ```
 
 检查 D:\CodexProjects\nyx-browser 的变更，只提交本次对应文件，再推送 main。不要为了更新网页去推送 Ombre-Brain 仓库，也不要把 data、.env、令牌、个人记忆或浏览器测试资料提交进去。
 
-本版输出包括源码包 nyx-linkapi-chat-shell-source.zip 和可直接部署的网页包 nyx-browser-no-login.zip；这些是软件交付包，不是记忆备份。
+本版输出包括源码包 nyx-linkapi-history-source.zip 和可直接部署的网页包 nyx-browser-no-login.zip；这些是软件交付包，不是记忆备份。
 
 ## 11. 文件与空间
 
@@ -287,3 +292,13 @@ python tools/export_browser.py
 - 图片存储在设备内 IndexedDB，不自动跨设备同步；清除网站数据会丢失本地图片和聊天设置，不删除原 OB 的服务端记忆。
 - 停止会中止等待和流式输出，并阻止本轮之后的新工具调用；不能承诺撤回已经到达第三方服务的处理或写入。已提交的记忆写入应查询核对，不自动重试。
 - 本次仅将平台、跑团、日记、世界书和记忆隔离记录为架构规划，不暗中新增入口、购买资源或迁移数据。
+
+## 14. 竖屏锁定与历史导航补充
+
+此前安装配置仍为 orientation:any，本次纠正为 portrait-primary。添加到手机桌面的 PWA 使用该竖屏配置；全屏和安装模式下代码会请求屏幕方向锁定，侧栏“锁定竖屏”也可手动触发。成功才显示已锁定。
+
+普通 Edge 标签页的锁定权限由浏览器控制，网页不能保证强制禁止系统旋转。请求被拒绝时，页面明确提示从系统关闭自动旋转或尝试桌面安装版。现有已安装应用的 manifest 更新可能需要浏览器刷新安装信息；本次没有用 CSS 旋转界面来伪装锁屏，也没有以横屏遮罩阻止使用。
+
+消息区滑条只覆盖消息可视区域，不遮挡标题或输入框。支持拖动、Home/End、上下方向键与 PageUp/PageDown，拖动时显示所在日期。内容增长、图片载入和软键盘改变可视高度时更新位置。
+
+日期检索在侧栏，按当前设备的本地日期匹配可见的已保留消息，列出时间、说话人与片段。点击结果滚动到该条并短暂高亮；没有消息时显示空结果，不跳到邻近日期冒充命中。没有保留或已本地隐藏的记录不在结果中。本地持久历史仍为最近 500 条；这不是 OB 记忆检索，也不提供服务器聊天归档。

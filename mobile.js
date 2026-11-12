@@ -56,9 +56,23 @@
  function toast(message){var n=document.createElement('div');n.className='mobile-toast';n.textContent=message;document.body.appendChild(n);setTimeout(function(){n.remove();},3800);}
  var fs=document.createElement('button');fs.type='button';fs.id='mobileFullscreen';fs.setAttribute('aria-label','进入全屏');fs.setAttribute('aria-pressed','false');fs.textContent='全屏';
  fs.onclick=async function(){
-  try{if(document.fullscreenElement){await document.exitFullscreen();}else if(root.requestFullscreen&&document.fullscreenEnabled!==false){await root.requestFullscreen({navigationUI:'hide'});}else{install();}}catch(e){toast('浏览器暂不允许全屏，可从 Edge 菜单添加到手机桌面。');}sync();
+  try{if(document.fullscreenElement){await document.exitFullscreen();}else if(root.requestFullscreen&&document.fullscreenEnabled!==false){await root.requestFullscreen({navigationUI:'hide'});await lockPortrait(false);}else{install();}}catch(e){toast('浏览器暂不允许全屏，可从 Edge 菜单添加到手机桌面。');}sync();
  };
  if(window.NYX_BROWSER_ONLY){var tools=document.querySelector('.drawer-tools');if(tools)tools.appendChild(fs);}else if(bar)bar.insertBefore(fs,bar.lastElementChild);
- document.addEventListener('fullscreenchange',function(){var on=!!document.fullscreenElement;fs.textContent=on?'退出全屏':'全屏';fs.setAttribute('aria-label',on?'退出全屏':'进入全屏');fs.setAttribute('aria-pressed',String(on));baseline=window.innerHeight;sync();});
+ var portraitButton=document.createElement('button');portraitButton.type='button';portraitButton.id='portraitLock';portraitButton.textContent='锁定竖屏';portraitButton.setAttribute('aria-pressed','false');
+ var locking=null;
+ function installed(){return window.matchMedia('(display-mode: standalone)').matches||window.matchMedia('(display-mode: fullscreen)').matches||navigator.standalone===true;}
+ async function lockPortrait(explain){
+  if(locking){const ok=await locking;if(!ok&&explain)toast('当前浏览器不允许网页锁定方向。可在手机快捷设置中关闭“自动旋转”，或从桌面安装版打开。');return ok;}
+  locking=(async()=>{try{if(!screen.orientation?.lock)throw Error('unsupported');await screen.orientation.lock('portrait-primary');portraitButton.textContent='竖屏已锁定';portraitButton.setAttribute('aria-pressed','true');return true;}
+   catch(e){portraitButton.textContent='锁定竖屏';portraitButton.setAttribute('aria-pressed','false');if(explain)toast('当前浏览器不允许网页锁定方向。可在手机快捷设置中关闭“自动旋转”，或从桌面安装版打开。');return false;}})();
+  try{return await locking;}finally{locking=null;}
+ }
+ portraitButton.onclick=async function(){closeDrawer();if(!document.fullscreenElement&&!installed()&&root.requestFullscreen&&document.fullscreenEnabled!==false){try{await root.requestFullscreen({navigationUI:'hide'});}catch(e){}}await lockPortrait(true);sync();};
+ var portraitTools=document.querySelector('.drawer-tools');if(portraitTools)portraitTools.appendChild(portraitButton);
+ screen.orientation?.addEventListener?.('change',function(){if(document.fullscreenElement||installed())lockPortrait(false);});
+ document.addEventListener('visibilitychange',function(){if(!document.hidden&&(document.fullscreenElement||installed()))lockPortrait(false);});
+ if(installed())lockPortrait(false);
+ document.addEventListener('fullscreenchange',function(){var on=!!document.fullscreenElement;if(on)lockPortrait(false);else if(!installed()){portraitButton.textContent='锁定竖屏';portraitButton.setAttribute('aria-pressed','false');}fs.textContent=on?'退出全屏':'全屏';fs.setAttribute('aria-label',on?'退出全屏':'进入全屏');fs.setAttribute('aria-pressed',String(on));baseline=window.innerHeight;sync();});
  window.addEventListener('appinstalled',function(){deferredInstall=null;});
 })();
