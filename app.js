@@ -8,10 +8,10 @@
   var C = window.NYX || {}, HOME = C.relay || "/relay", ME = C.meName || "Me";
   // the chat talks to whoever you picked on the contacts page (nyx_relay / nyx_chat_key / nyx_ai); everything else in the house — the hold, town, listen, kitchen, attic — stays with the first companion (HOME + nyx_key)
   function ls(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-  var RELAY = ls("nyx_relay") || HOME, AI = (RELAY !== HOME && ls("nyx_ai")) || C.aiName || "Companion";
+  var RELAY = ls("nyx_relay") || HOME, AI = (RELAY !== HOME && ls("nyx_ai")) || (C.contact && C.contact.name) || C.aiName || "Companion";
   var GROUP = /\/g$/.test(RELAY);   // the group chat: the first companion's relay at /g; nobody's gauge, every answer says who it's from
   var root = document.documentElement, $ = function (id) { return document.getElementById(id); };
-  var key = null, hkey = null, lastId = 0, byId = new Map(), drafts = new Map(), quote = null;
+  var chatBusy = false, key = null, hkey = null, lastId = 0, byId = new Map(), drafts = new Map(), quote = null;
   var log = $("log"), text = $("text"), sendBtn = $("send");
 
   var paintSide = NyxPaper.paint;
@@ -100,7 +100,7 @@
     opt = opt || {}; opt.headers = Object.assign({ "Authorization": "Bearer " + k }, opt.headers || {});
     return fetch(base + path, opt).then(function (r) {
       if (r.status === 401) { var e = new Error("unauthorized"); e.auth = true; throw e; }
-      if (!r.ok) return r.json().catch(function () { return {}; }).then(function (d) { throw new Error(d.detail || "HTTP " + r.status); });
+      if (!r.ok) return r.json().catch(function () { return {}; }).then(function (d) { var e = new Error(d.detail || "HTTP " + r.status); e.cancelled = !!d.cancelled; throw e; });
       return r.json();
     });
   }
@@ -115,7 +115,15 @@
   var SPIN = ["\u00b7", "\u2722", "\u2736", "\u273b", "\u273d", "\u273b", "\u2736", "\u2722"];
   var VERBS = C.verbs || ["Pondering", "Noodling", "Percolating", "Mulling", "Brewing", "Musing", "Doodling", "Simmering", "Whisking", "Daydreaming", "Scheming", "Painting"];
   function secsText(n) { n = n || 0; return n >= 3600 ? Math.floor(n / 3600) + "h " + Math.floor(n % 3600 / 60) + "m" : n >= 60 ? Math.floor(n / 60) + "m " + (n % 60) + "s" : n + "s"; }
+  function setTurnBusy(on) {
+    if (!window.NYX_BROWSER_ONLY) return;
+    chatBusy = !!on; sendBtn.hidden = chatBusy; $("stopReply").hidden = !chatBusy;
+    if (!chatBusy) { clearTimeout(typingOffT); if (typingEl) { typingEl.remove(); typingEl = null; } }
+  }
+  window.addEventListener("nyx-turn-state", function(e) { setTurnBusy(e.detail.busy); });
+  $("stopReply").onclick = function() { api("/app/stop", {method:"POST"}).catch(function(e) { toast(e.message); }); };
   function paintState() {
+    if (window.NYX_BROWSER_ONLY) { if (spinT) { clearInterval(spinT); spinT = 0; } return; }
     var em = $("state").querySelector("em"), working = typingOn || (busy && busy.state === "busy");
     $("state").title = busy && busy.state === "busy" ? [busy.tool, busy.detail, busy.secs ? "this turn " + secsText(busy.secs) : ""].filter(Boolean).join(" \u00b7 ") : "";
     if (working && !spinT) {
@@ -137,7 +145,7 @@
     clearTimeout(busyT);
     if (GROUP) return;
     if (!key || document.hidden || $("room").hidden) { busyT = setTimeout(pollBusy, 5000); return; }
-    api("/app/busy").then(function (d) { d.at = Date.now(); busy = d; paintState(); }).catch(function () { busy = null; })
+    api("/app/busy").then(function (d) { d.at = Date.now(); busy = d; setTurnBusy(d.state === "busy"); paintState(); }).catch(function () { busy = null; })
       .then(function () { busyT = setTimeout(pollBusy, busy && busy.state === "busy" ? 2500 : 5000); });
   }
   document.addEventListener("visibilitychange", function () { if (!document.hidden) pollBusy(); });
@@ -177,6 +185,8 @@
     if (ev.id != null && ev.from) { put(ev); return; }
     switch (ev.type) {
       case "typing": typing(ev.active); break;
+      case "turn_state": setTurnBusy(ev.busy); break;
+      case "reply_cancel": dropDraft(ev.stream_id + ":reply"); break;
       case "reply_delta": case "thinking_delta": draft(ev); break;
     }
   }
@@ -309,7 +319,7 @@
       if (!String(m.text || "").trim() && atts.length === 1 && /^sticker-/.test(atts[0].name || "")) el.classList.add("only-stk", "stk-att");   // your own sticker went up as a picture; show it like a sticker
       STK.lastIndex = 0;
     }
-    el.innerHTML = '<div class="body">' + inner + '<span class="t">' + (m.meta && m.meta.interaction_mode === "scene" ? '<span class="interaction-label">线下</span>' : "") + hm(m.ts) + (me ? (m.id !== "" && m.id != null ? MARK_SENT : MARK_WAIT) : "") + "</span></div>";
+    el.innerHTML = '<div class="body">' + inner + '<span class="t">' + (m.meta && m.meta.interaction_mode === "scene" ? '<span class="interaction-label">线下</span>' : "") + hm(m.ts) + (m.meta && m.meta.stopped ? '<span class="reply-status">已停止</span>' : "") + (me ? (m.id !== "" && m.id != null ? MARK_SENT : MARK_WAIT) : "") + "</span></div>";
     wireAtts(el, (m.meta && m.meta.attachments) || []);
     el.querySelectorAll("img.stk").forEach(stkFallback);
     if (m.id !== "" && m.id != null) {
@@ -349,6 +359,7 @@
   function draft(ev) {
     var stick = nearBottom(160);
     var k = ev.stream_id + ":" + (ev.type === "thinking_delta" ? "thinking" : "reply"), d = drafts.get(k);
+    if (ev.done && ev.final_text === "") { dropDraft(k); return; }
     if (!d && ev.done && !ev.final_text) return;
     if (!d) {
       d = { text: "", el: build({ id: "", from: "ai", kind: ev.type === "thinking_delta" ? "thinking" : "reply", text: "", ts: new Date().toISOString(), meta: {} }) };
@@ -367,7 +378,8 @@
   var typingEl = null, typingOffT = 0;
   function typing(on) {
     spin(on); clearTimeout(typingOffT);
-    if (on && !typingEl) { typingEl = document.createElement("div"); typingEl.id = "typing"; typingEl.innerHTML = "<i></i><i></i><i></i>"; log.appendChild(typingEl); if (nearBottom(160)) toBottom(); }
+    if (on && !typingEl && (!window.NYX_BROWSER_ONLY || chatBusy)) { typingEl = document.createElement("div"); typingEl.id = "typing"; typingEl.innerHTML = "<i></i><i></i><i></i>"; log.appendChild(typingEl); if (nearBottom(160)) toBottom(); }
+    if (!on && typingEl && window.NYX_BROWSER_ONLY) { typingEl.remove(); typingEl = null; }
     if (!on && typingEl) typingOffT = setTimeout(function () { if (typingEl) { typingEl.remove(); typingEl = null; } }, 2500);
   }
   function keepTyping() { if (typingEl) log.appendChild(typingEl); }
@@ -411,16 +423,17 @@
   }
   // one upload; on a flaky line it tries twice more before giving up
   function upload(it, tries) {
-    tries = tries || 0; it.done = null;
+    tries = tries || 0; it.done = null; it.error = "";
     it.job = fetch(RELAY + "/app/upload?name=" + encodeURIComponent(it.file.name), { method: "POST", headers: { "Authorization": "Bearer " + key, "Content-Type": it.file.type || "application/octet-stream" }, body: it.file })
-      .then(function (r) { if (!r.ok) throw new Error("upload " + r.status); return r.json(); })
+      .then(async function (r) { if (!r.ok) { var d = await r.json().catch(function(){return {};}); var e = new Error(d.detail || "图片准备失败"); e.permanent = r.status >= 400 && r.status < 500; throw e; } return r.json(); })
       .then(function (a) { it.done = a; it.el.classList.remove("up"); },
-        function () { if (tries < 2) return new Promise(function (ok) { setTimeout(ok, 1200); }).then(function () { return upload(it, tries + 1); }); it.el.classList.remove("up"); it.el.style.outline = "1px solid var(--accent)"; });
+        function (e) { if (!e.permanent && tries < 2) return new Promise(function (ok) { setTimeout(ok, 1200); }).then(function () { return upload(it, tries + 1); }); it.error = e.message; it.el.classList.remove("up"); it.el.style.outline = "1px solid var(--accent)"; });
     return it.job;
   }
   $("clip").onclick = function () { $("file").click(); };
   $("file").onchange = function () {
     Array.prototype.forEach.call(this.files, function (f) {
+      if (window.NYX_BROWSER_ONLY && (tray.length >= 4 || !/^image\/(jpeg|png|webp|gif)$/.test(f.type) || f.size > 15*1024*1024)) { toast("最多选择 4 张 JPEG、PNG、WebP 或 GIF 图片，原图每张不超过 15 MB。"); return; }
       var it = { name: f.name, done: null, el: document.createElement("div") };
       it.el.className = "it up"; it.el.innerHTML = '<button type="button" aria-label="Remove">×</button>' + (f.type.indexOf("image/") ? esc(f.name.slice(0, 14)) : "");
       if (!f.type.indexOf("image/")) { it.local = URL.createObjectURL(f); it.el.style.backgroundImage = "url(" + it.local + ")"; }
@@ -533,25 +546,35 @@
   // sending drops the bubble in at once, with blurred local previews of any images still uploading; the message itself
   // goes out once they're up. If an image never makes it, nothing is sent and a tap retries just the missing ones.
   function send() {
+    if (window.NYX_BROWSER_ONLY && chatBusy) { toast("可以先停止当前回复，再发送新消息。"); return; }
+    if (window.NyxInteraction) window.NyxInteraction.close();
     var t = text.value.trim(); if ((!t && !tray.length) || !key) return;
-    var items = tray.slice(), q = quote, interactionMode = window.NyxInteraction ? window.NyxInteraction.get() : "chat";
+    var cancelled = false, items = tray.slice(), q = quote, interactionMode = window.NyxInteraction ? window.NyxInteraction.get() : "chat";
     tray = []; trayEl.innerHTML = ""; trayEl.hidden = true;
     text.value = ""; grow(); setQuote(null);
     var local = items.map(function (x) { return x.local ? { kind: "image", name: x.name } : { kind: "file", name: x.name }; });
     var pending = build({ id: "", from: "human", text: t, ts: new Date().toISOString(), meta: Object.assign(q ? { quote: q } : {}, { attachments: local }) });
     pending.querySelectorAll(".att img[data-i]").forEach(function (im) { var x = items[+im.dataset.i]; if (x && x.local) im.src = x.local; });
     pending.classList.add("pending"); pending.dataset.text = t; log.appendChild(pending); keepTyping(); toBottom();
-    function mark(state, label, onTap) { pending.classList.remove("pending", "failed"); pending.classList.add(state); if (label) pending.querySelector(".t").textContent = label; pending.onclick = onTap || null; }
-    function fail(e) { mark("failed", e && e.auth ? "访问口令不正确" : (e && e.message ? e.message + " · 点此重试" : "未发送成功 · 点此重试"), function () { pending.remove(); text.value = t; grow(); send(); }); if (e && e.auth) logout(); }
+    function mark(state, label, onTap) { pending.classList.remove("pending", "failed"); pending.classList.add(state); if (label) pending.querySelector(".t").textContent = label; pending.onclick = null; var old = pending.querySelector(".failed-actions"); if (old) old.remove(); }
+    function fail(e) {
+      if (cancelled || (e && e.cancelled)) { pending.remove(); return; }
+      mark("failed", e && e.auth ? "访问口令不正确" : (e && e.message ? e.message : "未发送成功"));
+      var actions = document.createElement("div"); actions.className = "failed-actions";
+      var again = document.createElement("button"); again.type = "button"; again.className = "failed-retry"; again.textContent = "重试"; again.onclick = function(ev) { ev.stopPropagation(); retry(); };
+      var cancel = document.createElement("button"); cancel.type = "button"; cancel.className = "failed-cancel"; cancel.textContent = "取消"; cancel.onclick = function(ev) { ev.stopPropagation(); cancelled = true; pending.remove(); items.forEach(function(x) { if(x.local)URL.revokeObjectURL(x.local); }); };
+      actions.append(again,cancel); pending.appendChild(actions); if (e && e.auth) logout();
+    }
     function missing() { return items.some(function (x) { return x.file && !x.done; }); }
     function retry() {
       mark("pending"); pending.querySelector(".t").innerHTML = hm(new Date().toISOString()) + MARK_WAIT;
       Promise.all(items.map(function (x) { return x.file && !x.done ? upload(x) : null; })).then(function () {
-        if (missing()) { mark("failed", "image still not up — tap again later", retry); return; }
+        if (missing()) { fail(new Error(items.find(function(x){return x.error;})?.error || "图片仍未准备好。")); return; }
         go();
       });
     }
     function go() {
+      if (cancelled) return;
       var atts = items.filter(function (x) { return x.done; }).map(function (x) { return x.done; });
       if (!t && !atts.length) { fail(); return; }
       var body = { text: t, side: root.dataset.side, interaction_mode: interactionMode }; if (q) body.quote = q; if (atts.length) body.attachments = atts;
@@ -559,7 +582,7 @@
         .then(function () { setTimeout(catchUp, 1500); }).catch(fail);   // the stream normally echoes it; this is the safety net
     }
     Promise.all(items.map(function (x) { return x.job || null; })).then(function () {
-      if (missing()) { mark("failed", "image didn't upload — tap to retry", retry); return; }
+      if (missing()) { fail(new Error(items.find(function(x){return x.error;})?.error || "图片未准备好。")); return; }
       return go();
     }).catch(fail);
   }

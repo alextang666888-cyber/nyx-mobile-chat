@@ -49,7 +49,7 @@
    if(e.key==='Tab'){var buttons=Array.from(panel.querySelectorAll('button:not([disabled]),a[href]')).filter(function(b){return !b.closest('[hidden]');});var first=buttons[0],last=buttons[buttons.length-1];if(e.shiftKey&&document.activeElement===first){last.focus();e.preventDefault();}else if(!e.shiftKey&&document.activeElement===last){first.focus();e.preventDefault();}}
   });
  }
- var help=document.createElement('dialog');help.className='mobile-help';help.innerHTML='<h2>像 App 一样全屏使用</h2><p>在安卓 Edge 的菜单中选择“添加到主屏幕”或“安装应用”，再从手机桌面的 Nyx 图标打开。安装版会优先使用全屏显示。浏览器支持时，也可以直接点击顶部的“全屏”。</p><button type="button">知道了</button>';document.body.appendChild(help);help.querySelector('button').onclick=function(){help.close();};
+ var help=document.createElement('dialog');help.className='mobile-help';help.innerHTML='<h2>像 App 一样全屏使用</h2><p>在安卓 Edge 的菜单中选择“添加到主屏幕”或“安装应用”，再从手机桌面的 Nyx 图标打开。安装版会优先使用全屏显示。浏览器支持时，也可以打开侧栏选择“全屏”。</p><button type="button">知道了</button>';document.body.appendChild(help);help.querySelector('button').onclick=function(){help.close();};
  var deferredInstall=null;
  window.addEventListener('beforeinstallprompt',function(e){e.preventDefault();deferredInstall=e;});
  async function install(){if(deferredInstall){var event=deferredInstall;deferredInstall=null;await event.prompt();}else help.showModal();}
@@ -58,7 +58,7 @@
  fs.onclick=async function(){
   try{if(document.fullscreenElement){await document.exitFullscreen();}else if(root.requestFullscreen&&document.fullscreenEnabled!==false){await root.requestFullscreen({navigationUI:'hide'});}else{install();}}catch(e){toast('浏览器暂不允许全屏，可从 Edge 菜单添加到手机桌面。');}sync();
  };
- if(bar)bar.insertBefore(fs,bar.lastElementChild);
+ if(window.NYX_BROWSER_ONLY){var tools=document.querySelector('.drawer-tools');if(tools)tools.appendChild(fs);}else if(bar)bar.insertBefore(fs,bar.lastElementChild);
  document.addEventListener('fullscreenchange',function(){var on=!!document.fullscreenElement;fs.textContent=on?'退出全屏':'全屏';fs.setAttribute('aria-label',on?'退出全屏':'进入全屏');fs.setAttribute('aria-pressed',String(on));baseline=window.innerHeight;sync();});
  window.addEventListener('appinstalled',function(){deferredInstall=null;});
 })();

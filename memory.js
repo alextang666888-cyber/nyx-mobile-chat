@@ -70,9 +70,9 @@
   if(id==null)return null;if(!data||data.id!==id)throw error('记忆库返回的会话响应不完整。');return unwrap(data);
  }
  function unwrap(data){if(data.error)throw error('记忆工具调用失败：'+scrub(data.error.message||'未知错误'));return data.result;}
- async function rpc(method,params,notification=false){
+ async function rpc(method,params,notification=false,signal){
   const id=notification?null:nextId++;const message={jsonrpc:'2.0',method,...(!notification?{id}:{}),...(params?{params}:{})};
-  async function send(force){const token=await access(force);const headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream','Authorization':'Bearer '+token,'MCP-Protocol-Version':version};if(session)headers['Mcp-Session-Id']=session;return network(RESOURCE,{method:'POST',headers,body:JSON.stringify(message),credentials:'omit',redirect:'error',signal:AbortSignal.timeout(120000)});}
+  async function send(force){signal?.throwIfAborted();const token=await access(force);const headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream','Authorization':'Bearer '+token,'MCP-Protocol-Version':version};if(session)headers['Mcp-Session-Id']=session;return network(RESOURCE,{method:'POST',headers,body:JSON.stringify(message),credentials:'omit',redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(120000)]):AbortSignal.timeout(120000)});}
   let response=await send(false);if(response.status===401)response=await send(true);
   if(!response.ok){if(response.status===404){session='';tools=[];coreCache=null;emit({ready:false});}throw error('记忆库请求失败（HTTP '+response.status+'）。写入不会自动重试，请先查询结果。');}
   const sid=response.headers.get('Mcp-Session-Id');if(sid)session=sid;
@@ -87,13 +87,13 @@
  }
  function resultText(result){const parts=(result?.content||[]).filter(x=>x.type==='text').map(x=>x.text||'');if(!parts.length&&result?.structuredContent)parts.push(JSON.stringify(result.structuredContent));const value=scrub(parts.join('\n'));let parsed=result?.structuredContent;try{if(!parsed&&parts.length===1)parsed=JSON.parse(value);}catch(e){}if(result?.isError||(parsed&&typeof parsed==='object'&&(parsed.error||parsed.ok===false||parsed.success===false)))throw error(value||'记忆工具报告失败。');return value||'(工具已完成，没有正文)';}
  async function call(name,args={},options={}){
-  await open();if(!CORE.has(name)||!tools.some(t=>t.name===name))throw error('当前记忆库不提供这个操作。');
+  options.signal?.throwIfAborted();await open();options.signal?.throwIfAborted();if(!CORE.has(name)||!tools.some(t=>t.name===name))throw error('当前记忆库不提供这个操作。');
   if(name==='trace'&&([args.delete,args.hard_delete].some(v=>v===true||v===1||v==='true'||v==='1')||['approve','approved'].includes(args.deletion_decision))&&!/(删除|删掉|移除.*记忆)/.test(options.userText||''))throw error('删除记忆需要用户明确提出；当前只允许查询和更新。');
   const started=Date.now(),write=['hold','grow','trace'].includes(name);event(name,'running',write?'正在保存或更新记忆…':'正在读取记忆…');
-  try{const result=await rpc('tools/call',{name,arguments:args});const text=resultText(result);if(write)coreCache=null;emit({error:'',...(write?{lastWrite:true}:{lastRead:true})});event(name,'success',(write?'记忆保存/更新调用已完成':(name==='letter_read'?'信件读取已完成':'记忆读取已完成'))+'（'+((Date.now()-started)/1000).toFixed(1)+' 秒）');return text;}
-  catch(e){const message=scrub(e.message||'记忆操作失败。');emit({error:message,...(write?{lastWrite:false}:{lastRead:false})});event(name,'error',message);throw e;}
+  try{const result=await rpc('tools/call',{name,arguments:args},false,options.signal);const text=resultText(result);if(write)coreCache=null;emit({error:'',...(write?{lastWrite:true}:{lastRead:true})});event(name,'success',(write?'记忆保存/更新调用已完成':(name==='letter_read'?'信件读取已完成':'记忆读取已完成'))+'（'+((Date.now()-started)/1000).toFixed(1)+' 秒）');return text;}
+  catch(e){if(options.signal?.aborted){if(write)coreCache=null;event(name,'stopped',write?'写入请求已停止等待，已提交的结果需要另行查询。':'本次读取已停止');throw e;}const message=scrub(e.message||'记忆操作失败。');emit({error:message,...(write?{lastWrite:false}:{lastRead:false})});event(name,'error',message);throw e;}
  }
- async function prepare(query){
+ async function prepare(query,options={}){
   if(!auth)return {context:'',tools:[],available:false};
   const started=Date.now();emit({lastRead:false,lastWrite:false,contextLimited:false});
   try{
@@ -101,12 +101,12 @@
    const find=name=>tools.find(t=>t.name===name),advanced=find('breath_advanced'),advancedProps=advanced?.inputSchema?.properties||{};
    const budgeted=!!advancedProps.max_tokens;let loadCore,loadRelated;
    if(!coreCache||Date.now()-coreCache.created>300000){
-    loadCore=budgeted?call('breath_advanced',{max_tokens:1600,max_results:3}):(find('breath')?call('breath',{}):Promise.resolve(''));
+    loadCore=budgeted?call('breath_advanced',{max_tokens:1600,max_results:3},options):(find('breath')?call('breath',{},options):Promise.resolve(''));
     loadCore=loadCore.then(text=>{coreCache={text,created:Date.now()};return text;});
    }else loadCore=Promise.resolve(coreCache.text);
-   if(budgeted)loadRelated=call('breath_advanced',{query:String(query||'').slice(0,600),max_tokens:1800,max_results:3});
-   else if(find('breath_search')){const props=find('breath_search').inputSchema?.properties||{};const args={query:String(query||'').slice(0,600)};if(props.max_results)args.max_results=3;loadRelated=call('breath_search',args);}
-   else if(find('breath')){const props=find('breath').inputSchema?.properties||{};loadRelated=props.query?call('breath',{query:String(query||'').slice(0,600)}):Promise.resolve('');}
+   if(budgeted)loadRelated=call('breath_advanced',{query:String(query||'').slice(0,600),max_tokens:1800,max_results:3},options);
+   else if(find('breath_search')){const props=find('breath_search').inputSchema?.properties||{};const args={query:String(query||'').slice(0,600)};if(props.max_results)args.max_results=3;loadRelated=call('breath_search',args,options);}
+   else if(find('breath')){const props=find('breath').inputSchema?.properties||{};loadRelated=props.query?call('breath',{query:String(query||'').slice(0,600)},options):Promise.resolve('');}
    else throw error('当前记忆库没有提供检索工具。');
    const [core,related]=await Promise.all([loadCore,loadRelated]);
    let parts=[],size=0,limited=false;for(const [label,text] of [['相关记忆',related],['核心与浮现记忆',core]]){
@@ -117,7 +117,7 @@
    parts.push('信件目录与信件正文是不同入口：普通 breath 检索不包含 Letter 正文，需要读信时使用 letter_read；目录里的标题、日期和重要度不能当作信件原文。');
    const context=parts.join('\n\n');emit({retrieveMs:Date.now()-started,contextChars:context.length,contextLimited:limited});
    return {context,tools:tools.slice(),available:true,limited};
-  }catch(e){emit({lastRead:false,retrieveMs:Date.now()-started,error:scrub(e.message)});return {context:'',tools:[],available:false,failed:true};}
+  }catch(e){options.signal?.throwIfAborted();emit({lastRead:false,retrieveMs:Date.now()-started,error:scrub(e.message)});return {context:'',tools:[],available:false,failed:true};}
  }
  async function letters(query=''){await open();if(!tools.some(t=>t.name==='letter_read'))throw error('原 OB 当前没有提供 letter_read，请在原服务确认信件读取接口。');return call('letter_read',{query,limit:1});}
  async function search(query){await open();if(tools.some(t=>t.name==='breath_search'))return call('breath_search',{query});const t=tools.find(t=>t.name==='breath');if(!t)throw error('没有可用的检索工具。');return call('breath',t.inputSchema?.properties?.query?{query}:{});}

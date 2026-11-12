@@ -1,0 +1,14 @@
+/* Device-local chat images. Only selected model requests receive image data. AGPL-3.0. */
+(function(){
+ 'use strict';if(!window.NYX_BROWSER_ONLY)return;
+ var opening;const TYPES=new Set(['image/jpeg','image/png','image/webp','image/gif']),MAX=3*1024*1024;
+ function db(){if(!opening)opening=new Promise((resolve,reject)=>{const req=indexedDB.open('nyx-chat-media',1);req.onupgradeneeded=()=>req.result.createObjectStore('images',{keyPath:'id'});req.onsuccess=()=>resolve(req.result);req.onerror=()=>{opening=null;reject(Error('浏览器无法保存图片，请检查设备存储权限。'));};});return opening;}
+ function check(signal){signal?.throwIfAborted();}
+ async function put(blob,name){if(!TYPES.has(blob.type)||!blob.size||blob.size>MAX)throw Error('请选择 JPEG、PNG、WebP 或 GIF 图片，处理后每张不超过 3 MB。');const id=crypto.randomUUID(),database=await db();await new Promise((resolve,reject)=>{const tx=database.transaction('images','readwrite');tx.objectStore('images').put({id,blob,name:String(name||'图片').slice(0,120)});tx.oncomplete=resolve;tx.onerror=()=>reject(Error('图片保存失败，设备存储空间可能不足。'));tx.onabort=tx.onerror;});return {kind:'image',name:String(name||'图片').slice(0,120),url:'/relay/app/media/'+id,mime:blob.type};}
+ function idOf(url){const match=String(url||'').match(/^\/relay\/app\/media\/([a-f0-9-]{36})$/);if(!match)throw Error('图片地址不是此设备的聊天图片。');return match[1];}
+ async function get(url){const id=idOf(url),database=await db();return new Promise((resolve,reject)=>{const req=database.transaction('images').objectStore('images').get(id);req.onsuccess=()=>req.result?resolve(req.result.blob):reject(Error('这张图片在当前设备已不可用。'));req.onerror=()=>reject(Error('读取图片失败。'));});}
+ async function dataURL(url,signal){check(signal);const blob=await get(url);check(signal);return new Promise((resolve,reject)=>{const reader=new FileReader(),stop=()=>reader.abort();const clean=()=>signal?.removeEventListener('abort',stop);reader.onload=()=>{clean();resolve(reader.result);};reader.onerror=()=>{clean();reject(Error('图片读取失败。'));};reader.onabort=()=>{clean();reject(new DOMException('已停止','AbortError'));};signal?.addEventListener('abort',stop,{once:true});if(signal?.aborted){clean();reject(signal.reason);return;}reader.readAsDataURL(blob);});}
+ function attachments(items){if(items==null)return [];if(!Array.isArray(items)||items.length>4)throw Error('每条消息最多发送 4 张图片。');return items.map(a=>{if(a?.kind!=='image')throw Error('目前只能发送图片。');idOf(a.url);return {kind:'image',url:a.url,name:String(a.name||'图片').slice(0,120)};});}
+ async function content(text,items,signal){const list=attachments(items);if(!list.length)return text;const blocks=text?[{type:'text',text}]:[];for(const a of list){check(signal);blocks.push({type:'image_url',image_url:{url:await dataURL(a.url,signal)}});}return blocks;}
+ window.NyxImages={put,get,content,attachments};
+})();

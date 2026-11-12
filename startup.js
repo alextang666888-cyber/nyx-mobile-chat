@@ -28,7 +28,7 @@
     ['nyx_key','nyx_relay','nyx_chat_key','nyx_ai'].forEach(function(k){try{localStorage.removeItem(k);}catch(e){}});
     if(!window.NYX_PREVIEW_ONLY){location.href=location.pathname;}else{location.reload();}
   };
-  bar.append(note,reset);document.body.prepend(bar);
+  bar.append(note,reset);if(!window.NYX_BROWSER_ONLY)document.body.prepend(bar);else document.documentElement.classList.add('nyx-chat-shell');
   document.getElementById('previewButton').onclick=function(){location.href=location.pathname+'?preview=1#chat';};
   document.getElementById('gateForm').addEventListener('submit',function(e){
     if(preview)return;
